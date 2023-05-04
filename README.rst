@@ -3,6 +3,53 @@
 Userspace block driver(ublk)
 ============================
 
+This fork aims to extend the loop target of ublksrv and integrate a third party 
+encryption driver, to improve the security of the system.
+Ublkdrv receives IO requests from an application and forwards them to ublksrv.
+Ublksrv handles the IO requests, and responds to ublkdrv. 
+
+In case of a write request, ublksrv saves data from the provided buffer to the 
+backing file. 
+In case of a read request, ublksrv copies to the provided buffer the requested data from 
+the backing file.
+All IO is implemented unencrypted.
+
+In this project, we will work on adding support on ublksrv for encrypting and 
+decrypting the data upon request from the application. 
+This will improve the security of the system.
+
+Current implementation of a read/write request:
+
++-----+    +---------+    +---------+    +--------------+
+|     | => |         | => |         | => |              |
+| APP |    | ublkdrv |    | ublksrv |    | backing file |
+|     | <= |         | <= |         | <= |              |
++-----+    +---------+    +---------+    +--------------+
+
+
+Implementation of encrypted write request:
+
++-----+    +---------+    +---------+     +-----------------+    +--------------+
+|     | => |         | => |         | =>  |                 | => |              |
+| APP |    | ublkdrv |    | ublksrv |     | encrypt request |    | backing file | =+
+|     | <= |         | <= |         | <=+ |                 |    |              |  |
++-----+    +---------+    +---------+   | +-----------------+    +--------------+  |
+                                        |                                          |
+                                        +========================================= +
+
+
+Implementation of encrypted read request:
+  
++-----+    +---------+    +---------+     +--------------+    +-----------------+
+|     | => |         | => |         | =>  |              | => |                 |
+| APP |    | ublkdrv |    | ublksrv |     | backing file |    | decrypt request | =+
+|     | <= |         | <= |         | <=+ |              |    |                 |  |
++-----+    +---------+    +---------+   | +--------------+    +-----------------+  |
+                                        |                                          |
+                                        +========================================= +
+
+
+
 Introduction
 ============
 
