@@ -18,37 +18,6 @@ In this project, we will work on adding support on ublksrv for encrypting and
 decrypting the data upon request from the application. 
 This will improve the security of the system.
 
-Current implementation of a read/write request:
-
-+-----+    +---------+    +---------+    +--------------+
-|     | => |         | => |         | => |              |
-| APP |    | ublkdrv |    | ublksrv |    | backing file |
-|     | <= |         | <= |         | <= |              |
-+-----+    +---------+    +---------+    +--------------+
-
-
-Implementation of encrypted write request:
-
-+-----+    +---------+    +---------+     +-----------------+    +--------------+
-|     | => |         | => |         | =>  |                 | => |              |
-| APP |    | ublkdrv |    | ublksrv |     | encrypt request |    | backing file | =+
-|     | <= |         | <= |         | <=+ |                 |    |              |  |
-+-----+    +---------+    +---------+   | +-----------------+    +--------------+  |
-                                        |                                          |
-                                        +========================================= +
-
-
-Implementation of encrypted read request:
-  
-+-----+    +---------+    +---------+     +--------------+    +-----------------+
-|     | => |         | => |         | =>  |              | => |                 |
-| APP |    | ublkdrv |    | ublksrv |     | backing file |    | decrypt request | =+
-|     | <= |         | <= |         | <=+ |              |    |                 |  |
-+-----+    +---------+    +---------+   | +--------------+    +-----------------+  |
-                                        |                                          |
-                                        +========================================= +
-
-
 
 Introduction
 ============
