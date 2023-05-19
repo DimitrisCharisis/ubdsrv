@@ -45,3 +45,5 @@ Makefile.in
 /ublk
 /ublksrv.pc
 /doc/html
+
+cscope.out
