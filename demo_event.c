@@ -21,7 +21,12 @@
 #include "ublksrv_utils.h"
 #include "ublksrv_aio.h"
 
+#include <gpgme.h>
+#include "support_gpgme.h"
+
 #define UBLKSRV_TGT_TYPE_DEMO  0
+#define KEY_SIZE 64
+#define IV_SIZE 16
 
 static bool use_aio = 0;
 static int backing_fd = -1;
@@ -34,6 +39,14 @@ struct demo_queue_info {
 	int qid;
 
 	pthread_t thread;
+};
+
+struct encryption {
+	unsigned char key[KEY_SIZE];
+	union tweak {
+		__u64 sector;
+		unsigned char iv[IV_SIZE];
+	}tweak;
 };
 
 static struct ublksrv_ctrl_dev *this_ctrl_dev;
@@ -529,6 +542,53 @@ static const struct ublksrv_tgt_type demo_event_tgt_type = {
 	.handle_event = demo_handle_event,
 };
 
+int start_enc() {
+	gpgme_ctx_t ctx;
+	gpgme_error_t err;
+	gpgme_data_t plain, cipher;
+	int fd1, fd2;
+	int ret;
+	struct encryption enc;
+	
+	init_gpgme(GPGME_PROTOCOL_OpenPGP);
+	
+	err = gpgme_new(&ctx);
+	fail_if_err(err);
+
+	gpgme_set_armor(ctx, 1);
+
+	fd1 = open("/dev/random", O_RDONLY);
+	if (fd1 == -1) {
+		fprintf(stderr, "open /dev/random failed\n");
+		return -1;
+	}
+
+	fd2 = open("secret_sym_key.gpg", O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd2 == -1) {
+		fprintf(stderr, "open secret_sym_key.gpg failed\n");
+		return -1;
+	}
+	
+	ret = read(fd1, enc.key, KEY_SIZE);
+	if (ret != KEY_SIZE) {
+		fprintf(stderr, "read key size from /dev/random failed\n");
+		return -1;
+	}
+	
+	err = gpgme_data_new_from_mem(&plain, enc.key, KEY_SIZE, 0);
+	fail_if_err(err);
+
+	err = gpgme_data_new_from_fd(&cipher, fd2);
+	fail_if_err(err);
+
+	err = gpgme_op_encrypt(ctx, 0, 0, plain, cipher);
+	fail_if_err(err);
+
+	gpgme_data_release(plain);
+	gpgme_data_release(cipher);
+	gpgme_release(ctx);
+}
+
 int main(int argc, char *argv[])
 {
 	static const struct option longopts[] = {
@@ -582,6 +642,8 @@ int main(int argc, char *argv[])
 		error(EXIT_FAILURE, ENODEV, "ublksrv_ctrl_init");
 	/* ugly, but signal handler needs this_dev */
 	this_ctrl_dev = dev;
+
+	ret = start_enc();
 
 	ret = ublksrv_ctrl_add_dev(dev);
 	if (ret < 0) {
