@@ -10,6 +10,8 @@ EXTRA_DIST = \
 SUBDIRS = include lib tests
 
 AM_CXXFLAGS = -fcoroutines -std=c++20
+AM_CPPFLAGS = $(GPGME_CFLAGS)
+LDADD = $(GPGME_LIBS)
 
 sbin_PROGRAMS = ublk ublk_user_id
 noinst_PROGRAMS = demo_null demo_event

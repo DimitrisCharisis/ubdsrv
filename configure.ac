@@ -28,6 +28,8 @@ AC_PROG_CC
 AC_PROG_INSTALL
 AC_PROG_CPP
 
+AM_PATH_GPGME()
+
 AC_C_PROTOTYPES
 test "x$U" != "x" && AC_MSG_ERROR([Compiler not ANSI compliant])
 
