@@ -47,3 +47,4 @@ Makefile.in
 /doc/html
 
 cscope.out
+secret_sym_key.gpg
