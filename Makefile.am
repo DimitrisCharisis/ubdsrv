@@ -11,7 +11,7 @@ SUBDIRS = include lib tests
 
 AM_CXXFLAGS = -fcoroutines -std=c++20
 AM_CPPFLAGS = $(GPGME_CFLAGS)
-LDADD = $(GPGME_LIBS)
+LDADD = -L../../openssl-3.1.0 -lcrypto $(GPGME_LIBS) 
 
 sbin_PROGRAMS = ublk ublk_user_id
 noinst_PROGRAMS = demo_null demo_event
@@ -32,8 +32,8 @@ demo_null_LDADD = lib/libublksrv.la $(LIBURING_LIBS) $(PTHREAD_LIBS)
 
 demo_event_SOURCES = demo_event.c
 demo_event_CFLAGS = $(WARNINGS_CFLAGS) $(LIBURING_CFLAGS) $(PTHREAD_CFLAGS)
-demo_event_CPPFLAGS = $(demo_event_CFLAGS) -I$(top_srcdir)/include
-demo_event_LDADD = lib/libublksrv.la $(LIBURING_LIBS) $(PTHREAD_LIBS) -L../../openssl-3.1.0 -lcrypto
+demo_event_CPPFLAGS = $(demo_event_CFLAGS) -I$(top_srcdir)/include $(AM_CPPFLAGS)
+demo_event_LDADD = lib/libublksrv.la $(LIBURING_LIBS) $(PTHREAD_LIBS) $(LDADD) 
 
 ublk_user_id_SOURCES = utils/ublk_user_id.c
 ublk_user_id_CFLAGS = $(WARNINGS_CFLAGS) $(LIBURING_CFLAGS) $(PTHREAD_CFLAGS)
