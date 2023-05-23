@@ -22,6 +22,7 @@
 #include "ublksrv_aio.h"
 
 #include <gpgme.h>
+#include <openssl/evp.h>
 #include "support_gpgme.h"
 
 #define UBLKSRV_TGT_TYPE_DEMO  0
@@ -47,7 +48,7 @@ struct encryption {
 		__u64 sector;
 		unsigned char iv[IV_SIZE];
 	}tweak;
-};
+}enc;
 
 static struct ublksrv_ctrl_dev *this_ctrl_dev;
 static const struct ublksrv_dev *this_dev;
@@ -63,6 +64,114 @@ static void sig_handler(int sig)
 	fprintf(stderr, "got signal %d, stopping %d\n", sig,
 			state & UBLKSRV_QUEUE_STOPPING);
 	ublksrv_ctrl_stop_dev(this_ctrl_dev);
+}
+
+int encrypt(const char *buf, char *tmp_buf, const struct ublksrv_io_desc *iod)
+{
+	__u64 start_sector = iod->start_sector;
+	__u64 relative_bytes;
+	__u32 nr_sectors = iod->nr_sectors;
+	__u32 relative_sector = 0;
+	int encrypt_size;
+	EVP_CIPHER_CTX *ctx = NULL;
+	EVP_CIPHER *cipher = NULL;
+
+	ctx = EVP_CIPHER_CTX_new();
+	if (ctx == NULL) {
+		fprintf(stderr, "EVP_CIPHER_CTX_new() failed\n");
+		return -1;
+	}
+
+	cipher = EVP_CIPHER_fetch(NULL, "AES-256-XTS", NULL);
+	if (cipher == NULL) {
+		EVP_CIPHER_CTX_free(ctx);
+		fprintf(stderr, "EVP_CIPHER_fetch() failed\n");
+		return -1;
+	}
+
+	if (!EVP_EncryptInit_ex2(ctx, cipher, enc.key, NULL, NULL))
+		goto err;
+
+	printf("ENCRYPT\n");
+	while (nr_sectors) {
+		enc.tweak.sector = start_sector;
+		relative_bytes = relative_sector << 9;
+		
+		printf("start_sector = %u\n", (unsigned)enc.tweak.sector);
+		printf("relative_bytypes = %llu\n", (long long unsigned)relative_bytes);
+
+
+		if (!EVP_EncryptInit_ex2(ctx, NULL, NULL, &enc.tweak.iv, NULL))
+			goto err;
+		if (!EVP_EncryptUpdate(ctx, tmp_buf + relative_bytes, &encrypt_size,
+					buf + relative_bytes, 512))
+			goto err;
+
+		start_sector++;
+		relative_sector++;
+		nr_sectors--;
+	}
+	
+	EVP_CIPHER_free(cipher);
+	EVP_CIPHER_CTX_free(ctx);
+	return 1;
+
+err:
+	EVP_CIPHER_free(cipher);
+	EVP_CIPHER_CTX_free(ctx);
+	return -1;
+}
+
+
+int decrypt(char *buf, const char *tmp_buf, const struct ublksrv_io_desc *iod)
+{
+	int ret;
+	__u64 start_sector = iod->start_sector;
+	__u32 nr_sectors = iod->nr_sectors;
+	__u32 relative_sector = 0;
+	__u64 relative_bytes;
+	int decrypt_size;
+	EVP_CIPHER_CTX *ctx = NULL;
+	EVP_CIPHER *cipher = NULL;
+
+
+	ctx = EVP_CIPHER_CTX_new();
+	if (ctx == NULL) {
+		fprintf(stderr, "EVP_CIPHER_CTX_new() failed\n");
+		return -1;
+	}
+
+	cipher = EVP_CIPHER_fetch(NULL, "AES-256-XTS", NULL);
+	if (cipher == NULL) {
+		EVP_CIPHER_CTX_free(ctx);
+		fprintf(stderr, "EVP_CIPHER_fetch() failed\n");
+		return -1;
+	}
+
+	if (!EVP_DecryptInit_ex2(ctx, cipher, enc.key, NULL, NULL))
+		goto err;
+	
+	while (nr_sectors) {
+		enc.tweak.sector = start_sector;
+		relative_bytes = relative_sector << 9;
+		if (!EVP_DecryptInit_ex2(ctx, NULL, NULL, &enc.tweak.iv, NULL)) 
+			goto err;
+		if (!EVP_DecryptUpdate(ctx, buf + relative_bytes, &decrypt_size, 
+					tmp_buf + relative_bytes, 512))
+			goto err;
+		
+		start_sector++;
+		relative_sector++;
+		nr_sectors--;
+	}
+	EVP_CIPHER_free(cipher);
+	EVP_CIPHER_CTX_free(ctx);
+	return 1;
+
+err:
+	EVP_CIPHER_free(cipher);
+	EVP_CIPHER_CTX_free(ctx);
+	return -1;
 }
 
 static void queue_fallocate_async(struct io_uring_sqe *sqe,
@@ -144,13 +253,36 @@ int sync_io_submitter(struct ublksrv_aio_ctx *ctx,
 	unsigned long long offset = iod->start_sector << 9;
 	int mode = FALLOC_FL_KEEP_SIZE;
 	int ret;
+	int ret2;
+
+	const struct ublksrv_dev *dev = ublksrv_aio_get_dev(ctx);
+	const struct ublksrv_ctrl_dev_info *info = 
+		ublksrv_ctrl_get_dev_info(ublksrv_get_ctrl_dev(dev));
+	unsigned int io_buf_size = info->max_io_buf_bytes;
+
+	char *tmp_buf;
+	if (posix_memalign((void **)&tmp_buf, getpagesize(), io_buf_size)) {
+		fprintf(stderr, "posix_memalign() failed to allocate\n");
+		return -1;
+	}
 
 	switch (ublk_op) {
 	case UBLK_IO_OP_READ:
-		ret = pread(req->fd, buf, len, offset);
+		ret = pread(req->fd, tmp_buf, len, offset);
+		if (ret <=0)
+			break;
+		ret2 = decrypt(buf, tmp_buf, iod);
+		if (ret2 == -1) {
+			fprintf(stderr, "decrypt() failed. Do something!\n");
+		}
+		//memcpy(buf, tmp_buf, len);
 		break;
 	case UBLK_IO_OP_WRITE:
-		ret = pwrite(req->fd, buf, len, offset);
+		ret2 = encrypt(buf, tmp_buf, iod);
+		if (ret2 == -1) {
+			fprintf(stderr, "encrypt() failed. Do something!\n");
+		}
+		ret = pwrite(req->fd, tmp_buf, len, offset);
 		break;
 	case UBLK_IO_OP_FLUSH:
 		ret = fdatasync(req->fd);
@@ -167,6 +299,7 @@ int sync_io_submitter(struct ublksrv_aio_ctx *ctx,
 	}
 
 	req->res = ret;
+	free(tmp_buf);
 	return 1;
 }
 
@@ -548,7 +681,6 @@ int start_enc() {
 	gpgme_data_t plain, cipher;
 	int fd1, fd2;
 	int ret;
-	struct encryption enc;
 	
 	init_gpgme(GPGME_PROTOCOL_OpenPGP);
 	
@@ -588,6 +720,8 @@ int start_enc() {
 	gpgme_data_release(cipher);
 	gpgme_release(ctx);
 }
+
+
 
 int main(int argc, char *argv[])
 {
