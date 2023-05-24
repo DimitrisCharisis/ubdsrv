@@ -31,6 +31,7 @@
 
 static bool use_aio = 0;
 static int backing_fd = -1;
+static int sym_enc_key = -1;
 
 static struct ublksrv_aio_ctx *aio_ctx = NULL;
 static pthread_t io_thread;
@@ -721,7 +722,44 @@ int start_enc() {
 	gpgme_release(ctx);
 }
 
+int extract_key(int fd) {
+	gpgme_ctx_t ctx;
+	gpgme_error_t err;
+	gpgme_data_t plain, cipher;
+	size_t len;
+	unsigned char *buf;
 
+	init_gpgme(GPGME_PROTOCOL_OpenPGP);
+
+	err = gpgme_new(&ctx);
+	fail_if_err(err);
+
+	err = gpgme_data_new_from_fd(&cipher, fd);
+	fail_if_err(err);
+
+	err = gpgme_data_new(&plain);
+	fail_if_err(err);
+
+	err = gpgme_op_decrypt(ctx, cipher, plain);
+	fail_if_err(err);
+
+	buf = gpgme_data_release_and_get_mem(plain, &len);
+	if (len != KEY_SIZE) {
+		fprintf(stderr, "gpgme_data_release_and_get_mem() failed");
+		goto err;
+	}
+
+	memcpy(enc.key, buf, len);
+
+	gpgme_data_release(cipher);
+	gpgme_release(ctx);
+	return 1;
+
+err:
+	gpgme_data_release(cipher);
+	gpgme_release(ctx);
+	return -1;
+}
 
 int main(int argc, char *argv[])
 {
@@ -729,6 +767,7 @@ int main(int argc, char *argv[])
 		{ "need_get_data",	1,	NULL, 'g' },
 		{ "backing_file",	1,	NULL, 'f' },
 		{ "use_aio",		1,	NULL, 'a' },
+		{ "use_sym_enc_file",	1,	NULL, 'e' },
 		{ NULL }
 	};
 	struct ublksrv_dev_data data = {
@@ -743,7 +782,7 @@ int main(int argc, char *argv[])
 	struct ublksrv_ctrl_dev *dev;
 	int ret, opt;
 
-	while ((opt = getopt_long(argc, argv, "f:ga",
+	while ((opt = getopt_long(argc, argv, "f:gae:",
 				  longopts, NULL)) != -1) {
 		switch (opt) {
 		case 'g':
@@ -756,6 +795,10 @@ int main(int argc, char *argv[])
 			break;
 		case 'a':
 			use_aio = true;
+			break;
+		case 'e':
+			sym_enc_key = open(optarg, O_RDONLY);
+			//printf("sym_enc_key = %d\n", sym_enc_key);
 			break;
 		}
 	}
@@ -777,7 +820,22 @@ int main(int argc, char *argv[])
 	/* ugly, but signal handler needs this_dev */
 	this_ctrl_dev = dev;
 
-	ret = start_enc();
+	if (sym_enc_key < 0) {
+		ret = start_enc();	
+		if (ret < 0) {
+			fprintf(stderr, "start_enc() failed to encrypt and save a "
+					"symmetric key\n");
+			goto fail;
+		}
+	}
+	else {
+		ret = extract_key(sym_enc_key);
+		if (ret < 0) {
+			fprintf(stderr, "extract_key() failed to extract the symmetric "
+					"key from the given file descriptor\n");
+			goto fail;
+		}
+	}
 
 	ret = ublksrv_ctrl_add_dev(dev);
 	if (ret < 0) {
